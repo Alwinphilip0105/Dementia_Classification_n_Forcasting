@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Envs
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS/Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Project artifacts / runs
+runs/
+artifacts/
+*.onnx
+
+# Data (keep out of git)
+data/
+**/data/
+
+# Local extracted dataset folders (large)
+dementia-20251217T041331Z-1-001/
+nodementia-20251217T041501Z-1-001/
+
+

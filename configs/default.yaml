@@ -1,0 +1,16 @@
+project:
+  seed: 1337
+
+data:
+  dementia_dir: "dementia-20251217T041331Z-1-001"
+  control_dir: "nodementia-20251217T041501Z-1-001"
+  dementia_csv: "DementiaNet - dementia.csv"
+  processed_dir: "data/processed"
+
+segmentation:
+  time_window_sec: 2.0
+  time_hop_sec: 0.5
+  word_min_sec: 0.08
+  word_max_sec: 1.2
+
+
