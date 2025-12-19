@@ -2,5 +2,3 @@
 
 We plan to support WhisperX for word-level timestamps when available.
 """
-
-

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -19,5 +18,3 @@ def normalize_person_name(text: str) -> str:
     text = text.strip().casefold()
     text = _NON_ALNUM_RE.sub("", text)
     return text
-
-

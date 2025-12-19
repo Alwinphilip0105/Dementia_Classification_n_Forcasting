@@ -56,5 +56,3 @@ def extract_mfcc_pause_features(path: Path, cfg: MfccConfig) -> dict[str, float]
     feats["low_energy_frac_p20"] = low_energy_frac
     feats["duration_sec_sr16k"] = float(len(y) / sr)
     return feats
-
-

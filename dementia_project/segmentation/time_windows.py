@@ -22,7 +22,9 @@ def build_time_window_manifest(
     - metadata_df columns: audio_path, label, duration_sec
     - splits_df columns: audio_path, split
     """
-    df = metadata_df.merge(splits_df[["audio_path", "split"]], on="audio_path", how="left")
+    df = metadata_df.merge(
+        splits_df[["audio_path", "split"]], on="audio_path", how="left"
+    )
 
     segments: list[dict[str, object]] = []
     for row in df.to_dict(orient="records"):
@@ -46,5 +48,3 @@ def build_time_window_manifest(
             )
             start += cfg.hop_sec
     return pd.DataFrame(segments)
-
-

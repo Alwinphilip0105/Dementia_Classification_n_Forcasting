@@ -23,5 +23,3 @@ def load_splits(splits_csv: Path) -> pd.DataFrame:
     if "split" not in df.columns:
         raise ValueError("splits.csv must contain 'split'")
     return df
-
-

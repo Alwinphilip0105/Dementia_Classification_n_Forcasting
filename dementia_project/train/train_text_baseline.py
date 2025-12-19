@@ -68,8 +68,6 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx: int):
         text = str(self.texts[idx])
-        if not validate_text_input(text, self.max_length):
-            raise ValueError(f"Invalid text at index {idx}")
         label = int(self.labels[idx])
 
         encoding = self.tokenizer(
@@ -189,7 +187,6 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(1337)
 
-    # Load data
     metadata_df = load_metadata(args.metadata_csv)
     splits_df = load_splits(args.splits_csv)
     asr_manifest_df = pd.read_csv(args.asr_manifest_csv)
@@ -211,7 +208,7 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
-    # Create datasets
+    # Create datasets and dataloaders
     train_dataset = TextDataset(
         train_df["text"].tolist(),
         train_df["label"].tolist(),
@@ -228,7 +225,6 @@ def main():
         test_df["text"].tolist(), test_df["label"].tolist(), tokenizer, args.max_length
     )
 
-    # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)

@@ -30,5 +30,3 @@ def save_confusion_matrix_png(
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
-
-
