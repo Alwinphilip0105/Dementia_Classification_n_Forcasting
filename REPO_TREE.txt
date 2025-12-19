@@ -1,0 +1,145 @@
+Dementia_Classification_n_Forcasting/
+│
+├── .cursor/
+│   └── plans/
+│       └── EXECUTION_PLAN.md
+│
+├── .gitignore
+│
+├── configs/
+│   └── default.yaml
+│
+├── data/
+│   └── processed/
+│       ├── asr/                          # Legacy ASR outputs (partial)
+│       │   └── [audio_id]/
+│       │       └── transcript.json
+│       │
+│       ├── asr_whisper/                  # Whisper ASR outputs (full)
+│       │   ├── asr_manifest.csv
+│       │   ├── stdout_full.txt
+│       │   └── [audio_id]/
+│       │       ├── transcript.json
+│       │       └── words.json
+│       │
+│       ├── dropped.csv                    # Dropped audio files log
+│       ├── metadata.csv                   # Main metadata (audio + CSV join)
+│       ├── metadata_report.json           # Metadata build report
+│       ├── splits.csv                     # Train/valid/test splits
+│       ├── splits_report.json             # Split report
+│       └── time_segments.csv              # Time-window segments manifest
+│
+├── dementia-20251217T041331Z-1-001/      # Extracted dementia audio (raw)
+│   └── dementia/
+│       └── [person_name]/
+│           └── *.wav
+│
+├── dementia-20251217T041331Z-1-001.zip   # Original zip (ignored by git)
+│
+├── DementiaNet - dementia.csv             # Source metadata CSV
+│
+├── dementia_project/                      # Main Python package
+│   ├── __init__.py
+│   │
+│   ├── asr/                               # Automatic Speech Recognition
+│   │   ├── __init__.py
+│   │   ├── README.md
+│   │   ├── run_asr.py                     # CLI: Run Whisper ASR
+│   │   └── transcribe.py                  # Whisper transcription + timestamps
+│   │
+│   ├── data/                              # Data processing
+│   │   ├── __init__.py
+│   │   ├── build_metadata.py              # CLI: Build metadata.csv
+│   │   ├── build_splits.py                # CLI: Build splits.csv
+│   │   ├── io.py                          # Load metadata/splits helpers
+│   │   ├── name_normalize.py              # Name normalization utility
+│   │   └── splitting.py                   # Subject-level split logic
+│   │
+│   ├── export/                            # Model export (ONNX)
+│   │   └── __init__.py
+│   │
+│   ├── features/                          # Feature extraction
+│   │   ├── __init__.py
+│   │   ├── audio_features.py              # MFCC, RMS, pause features
+│   │   ├── spectrograms.py                # Log-mel spectrograms
+│   │   └── wav2vec2_embed.py              # Wav2Vec2 embeddings
+│   │
+│   ├── infer/                             # Inference utilities
+│   │   └── __init__.py
+│   │
+│   ├── models/                            # Model architectures
+│   │   └── __init__.py
+│   │
+│   ├── segmentation/                      # Audio segmentation
+│   │   ├── __init__.py
+│   │   ├── build_manifests.py             # CLI: Build time_segments.csv
+│   │   └── time_windows.py                # Time-window generation
+│   │
+│   ├── train/                             # Training scripts
+│   │   ├── __init__.py
+│   │   ├── train_densenet_spec.py         # DenseNet on spectrograms
+│   │   ├── train_nonml.py                 # Non-ML baseline (MFCC + LR)
+│   │   └── train_wav2vec2_nonml.py        # Wav2Vec2 + Logistic Regression
+│   │
+│   └── viz/                               # Visualization
+│       ├── __init__.py
+│       └── metrics.py                     # Confusion matrix plotting
+│
+├── nodementia-20251217T041331Z-1-001/     # Extracted non-dementia audio (raw)
+│   └── nodementia/
+│       └── [person_name]/
+│           └── *.wav
+│
+├── nodementia-20251217T041501Z-1-001.zip  # Original zip (ignored by git)
+│
+├── notebooks/
+│   └── final_report.ipynb                 # Final report notebook
+│
+├── runs/                                  # Training outputs
+│   ├── densenet_spec_full_cuda/
+│   │   ├── confusion_matrix_test.png
+│   │   ├── metrics.json
+│   │   └── stdout.txt
+│   │
+│   ├── densenet_spec_limit50/
+│   │   ├── confusion_matrix_test.png
+│   │   ├── metrics.json
+│   │   └── stdout.txt
+│   │
+│   ├── nonml_baseline/
+│   │   ├── confusion_matrix_test.png
+│   │   └── metrics.json
+│   │
+│   ├── nonml_baseline_limit30/
+│   │   ├── confusion_matrix_test.png
+│   │   └── metrics.json
+│   │
+│   ├── nonml_baseline_scaled/
+│   │   ├── confusion_matrix_test.png
+│   │   └── metrics.json
+│   │
+│   ├── wav2vec2_baseline_full_cuda/
+│   │   ├── confusion_matrix_test.png
+│   │   ├── metrics.json
+│   │   └── stdout.txt
+│   │
+│   ├── wav2vec2_baseline_limit30/
+│   │   ├── confusion_matrix_test.png
+│   │   └── metrics.json
+│   │
+│   └── wav2vec2_baseline_limit50/
+│       ├── confusion_matrix_test.png
+│       ├── metrics.json
+│       └── stdout.txt
+│
+├── tests/
+│   └── test_name_normalize.py             # Unit tests
+│
+├── DATA_CARD.md                           # Dataset documentation
+├── LICENSE
+├── MODEL_CARD.md                          # Model documentation
+├── poetry.lock                            # Poetry lock file
+├── pyproject.toml                         # Poetry config + dependencies
+├── README.md                              # Project README
+└── REPO_TREE.txt                          # This file
+
