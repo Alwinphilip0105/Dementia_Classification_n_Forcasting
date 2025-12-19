@@ -32,9 +32,15 @@ artifacts/
 data/
 **/data/
 
+# git exception, this folder is necessary pre-processing and this is easier than renaming
+!dementia_project/data/
+
 # Local extracted dataset folders (large)
 dementia-20251217T041331Z-1-001/
 nodementia-20251217T041501Z-1-001/
+
+dementia-20251218T112637Z-3-001/
+nodementia-20251218T113334Z-3-001
 
 # Original dataset zip files (large)
 dementia-20251217T041331Z-1-001.zip

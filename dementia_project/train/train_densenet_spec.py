@@ -7,6 +7,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,11 @@ from torchvision.models import densenet121
 from tqdm import tqdm
 
 from dementia_project.data.io import load_metadata, load_splits
-from dementia_project.features.spectrograms import MelSpecConfig, load_mono_resampled, log_mel_spectrogram
+from dementia_project.features.spectrograms import (
+    MelSpecConfig,
+    load_mono_resampled,
+    log_mel_spectrogram,
+)
 from dementia_project.viz.metrics import save_confusion_matrix_png
 
 
@@ -105,7 +110,9 @@ def main() -> None:
 
     metadata_df = load_metadata(args.metadata_csv)
     splits_df = load_splits(args.splits_csv)
-    df = metadata_df.merge(splits_df[["audio_path", "split"]], on="audio_path", how="inner")
+    df = metadata_df.merge(
+        splits_df[["audio_path", "split"]], on="audio_path", how="inner"
+    )
     if args.limit is not None and args.limit > 0 and args.limit < len(df):
         df = df.sample(n=args.limit, random_state=1337).reset_index(drop=True)
 
@@ -116,9 +123,24 @@ def main() -> None:
     valid_df = df[df["split"] == "valid"]
     test_df = df[df["split"] == "test"]
 
-    train_loader = DataLoader(SpecDataset(train_df, cfg), batch_size=train_cfg.batch_size, shuffle=True, num_workers=0)
-    valid_loader = DataLoader(SpecDataset(valid_df, cfg), batch_size=train_cfg.batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(SpecDataset(test_df, cfg), batch_size=train_cfg.batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(
+        SpecDataset(train_df, cfg),
+        batch_size=train_cfg.batch_size,
+        shuffle=True,
+        num_workers=0,
+    )
+    valid_loader = DataLoader(
+        SpecDataset(valid_df, cfg),
+        batch_size=train_cfg.batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
+    test_loader = DataLoader(
+        SpecDataset(test_df, cfg),
+        batch_size=train_cfg.batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -131,7 +153,7 @@ def main() -> None:
 
     for epoch in range(train_cfg.epochs):
         model.train()
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{train_cfg.epochs}")
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{train_cfg.epochs}")
         for x, y in pbar:
             x = x.to(device)
             y = y.to(device)
@@ -142,7 +164,7 @@ def main() -> None:
             opt.step()
             pbar.set_postfix(loss=float(loss.detach().cpu().item()))
 
-    metrics = {
+    metrics: dict[str, Any] = {
         "train": eval_model(model, train_loader, device),
         "valid": eval_model(model, valid_loader, device),
         "test": eval_model(model, test_loader, device),
@@ -151,7 +173,9 @@ def main() -> None:
 
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "metrics.json").write_text(json.dumps(sanitize_for_json(metrics), indent=2, allow_nan=False))
+    (out_dir / "metrics.json").write_text(
+        json.dumps(sanitize_for_json(metrics), indent=2, allow_nan=False)
+    )
 
     cm = np.array(metrics["test"]["confusion_matrix"], dtype=np.int64)
     save_confusion_matrix_png(
@@ -166,5 +190,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

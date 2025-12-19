@@ -37,6 +37,7 @@ def save_asr_result(out_dir: Path, result: AsrResult) -> None:
             json.dumps({"words": result.words}, indent=2), encoding="utf-8"
         )
 
+
 def _load_audio_16k_mono(path: Path) -> np.ndarray:
     wav, sr = torchaudio.load(str(path))
     if wav.ndim == 2 and wav.shape[0] > 1:
@@ -45,7 +46,9 @@ def _load_audio_16k_mono(path: Path) -> np.ndarray:
     target_sr = 16_000
     if sr != target_sr:
         wav = torchaudio.transforms.Resample(orig_freq=sr, new_freq=target_sr)(wav)
-    return wav.detach().cpu().numpy().astype(np.float32)
+    result: np.ndarray = wav.detach().cpu().numpy().astype(np.float32)
+    return result
+
 
 @torch.no_grad()
 def transcribe_with_whisper_pipeline(
@@ -75,12 +78,15 @@ def transcribe_with_whisper_pipeline(
     )
 
     audio = _load_audio_16k_mono(audio_path)
-    out = asr(
+    out: dict[str, Any] = asr(
         audio,
         return_timestamps="word",
         chunk_length_s=chunk_length_s,
         generate_kwargs={"language": language, "task": task},
     )
+
+    if isinstance(out, list):
+        out = out[0] if out else {}
 
     text = str(out.get("text", "")).strip()
     chunks = out.get("chunks", []) or []
@@ -111,5 +117,3 @@ def transcribe_with_whisper_pipeline(
         ]
 
     return AsrResult(text=text, segments=segments, words=words if words else None)
-
-

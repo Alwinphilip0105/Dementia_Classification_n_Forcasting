@@ -12,7 +12,6 @@ import math
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, roc_auc_score
@@ -21,7 +20,11 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 from dementia_project.data.io import load_metadata, load_splits
-from dementia_project.features.wav2vec2_embed import Wav2Vec2EmbedConfig, embed_file_mean_pool, load_wav2vec2
+from dementia_project.features.wav2vec2_embed import (
+    Wav2Vec2EmbedConfig,
+    embed_file_mean_pool,
+    load_wav2vec2,
+)
 from dementia_project.viz.metrics import save_confusion_matrix_png
 
 
@@ -47,19 +50,25 @@ def main() -> None:
 
     metadata_df = load_metadata(args.metadata_csv)
     splits_df = load_splits(args.splits_csv)
-    df = metadata_df.merge(splits_df[["audio_path", "split"]], on="audio_path", how="inner")
+    df = metadata_df.merge(
+        splits_df[["audio_path", "split"]], on="audio_path", how="inner"
+    )
     if args.limit is not None and args.limit > 0 and args.limit < len(df):
         df = df.sample(n=args.limit, random_state=1337).reset_index(drop=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    cfg = Wav2Vec2EmbedConfig(model_name=args.model_name, max_audio_sec=float(args.max_audio_sec))
+    cfg = Wav2Vec2EmbedConfig(
+        model_name=args.model_name, max_audio_sec=float(args.max_audio_sec)
+    )
     model, feature_extractor = load_wav2vec2(cfg, device)
 
     X_list: list[np.ndarray] = []
     y_list: list[int] = []
     split_list: list[str] = []
 
-    for row in tqdm(df.to_dict(orient="records"), desc="Extracting Wav2Vec2 embeddings"):
+    for row in tqdm(
+        df.to_dict(orient="records"), desc="Extracting Wav2Vec2 embeddings"
+    ):
         emb = embed_file_mean_pool(
             path=Path(str(row["audio_path"])),
             cfg=cfg,
@@ -81,7 +90,12 @@ def main() -> None:
     clf: Pipeline = Pipeline(
         steps=[
             ("scaler", StandardScaler()),
-            ("lr", LogisticRegression(max_iter=5000, class_weight="balanced", random_state=1337)),
+            (
+                "lr",
+                LogisticRegression(
+                    max_iter=5000, class_weight="balanced", random_state=1337
+                ),
+            ),
         ]
     )
     clf.fit(X[train_mask], y[train_mask])
@@ -89,17 +103,27 @@ def main() -> None:
     def eval_split(mask: np.ndarray) -> dict[str, float]:
         probs = clf.predict_proba(X[mask])[:, 1]
         preds = (probs >= 0.5).astype(int)
-        out = {"accuracy": float(accuracy_score(y[mask], preds)), "f1": float(f1_score(y[mask], preds))}
+        out = {
+            "accuracy": float(accuracy_score(y[mask], preds)),
+            "f1": float(f1_score(y[mask], preds)),
+        }
         if len(np.unique(y[mask])) == 2:
             out["roc_auc"] = float(roc_auc_score(y[mask], probs))
         else:
             out["roc_auc"] = float("nan")
         return out
 
-    metrics = {"train": eval_split(train_mask), "valid": eval_split(valid_mask), "test": eval_split(test_mask), "n": int(len(df))}
+    metrics = {
+        "train": eval_split(train_mask),
+        "valid": eval_split(valid_mask),
+        "test": eval_split(test_mask),
+        "n": int(len(df)),
+    }
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    (args.out_dir / "metrics.json").write_text(json.dumps(sanitize_for_json(metrics), indent=2, allow_nan=False))
+    (args.out_dir / "metrics.json").write_text(
+        json.dumps(sanitize_for_json(metrics), indent=2, allow_nan=False)
+    )
 
     test_probs = clf.predict_proba(X[test_mask])[:, 1]
     test_preds = (test_probs >= 0.5).astype(int)
@@ -116,5 +140,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
