@@ -22,6 +22,17 @@ from dementia_project.features.text_features import build_text_dataframe
 from dementia_project.viz.metrics import save_confusion_matrix_png
 
 
+def validate_text_input(text: str, max_length: int) -> bool:
+    """Validate text input before processing."""
+    if not isinstance(text, str):
+        return False
+    if len(text.strip()) == 0:
+        return False
+    if len(text) > max_length * 10:  # Reasonable upper bound
+        return False
+    return True
+
+
 def sanitize_for_json(obj):
     """Helper function to recursively sanitize an object for JSON serialization.
 
@@ -57,6 +68,8 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx: int):
         text = str(self.texts[idx])
+        if not validate_text_input(text, self.max_length):
+            raise ValueError(f"Invalid text at index {idx}")
         label = int(self.labels[idx])
 
         encoding = self.tokenizer(
@@ -168,6 +181,14 @@ def main():
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
 
+    import random
+
+    torch.manual_seed(1337)
+    np.random.seed(1337)
+    random.seed(1337)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(1337)
+
     # Load data
     metadata_df = load_metadata(args.metadata_csv)
     splits_df = load_splits(args.splits_csv)
@@ -231,6 +252,26 @@ def main():
         print(
             f"Valid - Acc: {valid_metrics['accuracy']:.4f}, F1: {valid_metrics['f1']:.4f}"
         )
+
+    # Save model checkpoint
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "model_name": args.model_name,
+            "num_classes": 2,
+        },
+        args.out_dir / "model.pth",
+    )
+
+    # Save config
+    config_dict = {
+        "model_name": args.model_name,
+        "max_length": args.max_length,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+    }
+    (args.out_dir / "config.json").write_text(json.dumps(config_dict, indent=2))
 
     # Final evaluation
     metrics = {
