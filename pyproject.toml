@@ -34,6 +34,7 @@ black = "^24.10.0"
 types-tqdm = "^4.67.0"
 types-pyyaml = "^6.0.0"
 scikit-learn = "^1.6.0"  # Already in main deps, but newer versions have py.typed
+ipykernel = "^7.1.0"
 
 [tool.ruff]
 line-length = 88

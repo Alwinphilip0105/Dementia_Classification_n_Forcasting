@@ -78,15 +78,20 @@ def transcribe_with_whisper_pipeline(
     )
 
     audio = _load_audio_16k_mono(audio_path)
-    out: dict[str, Any] = asr(
+    out_raw = asr(
         audio,
         return_timestamps="word",
         chunk_length_s=chunk_length_s,
         generate_kwargs={"language": language, "task": task},
     )
 
-    if isinstance(out, list):
-        out = out[0] if out else {}
+    # Normalize pipeline output to a single dict for downstream processing.
+    if isinstance(out_raw, list):
+        out: dict[str, Any] = out_raw[0] if out_raw else {}
+    elif isinstance(out_raw, dict):
+        out = out_raw
+    else:
+        out = {}
 
     text = str(out.get("text", "")).strip()
     chunks = out.get("chunks", []) or []
