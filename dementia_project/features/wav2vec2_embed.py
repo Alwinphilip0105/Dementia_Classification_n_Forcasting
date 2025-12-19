@@ -61,7 +61,7 @@ def embed_file_mean_pool(
     out = model(input_values=input_values)
     hidden = out.last_hidden_state  # (B, T, H)
     pooled = hidden.mean(dim=1).squeeze(0)
-    return pooled.detach().cpu().numpy().astype(np.float32)
+    return np.asarray(pooled.detach().cpu().numpy(), dtype=np.float32)
 
 
 def load_wav2vec2(cfg: Wav2Vec2EmbedConfig, device: torch.device):
@@ -70,5 +70,3 @@ def load_wav2vec2(cfg: Wav2Vec2EmbedConfig, device: torch.device):
     model.eval()
     model.to(device)
     return model, feature_extractor
-
-
