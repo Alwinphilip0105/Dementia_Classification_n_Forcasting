@@ -13,7 +13,10 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from dementia_project.asr.transcribe import save_asr_result, transcribe_with_whisper_pipeline
+from dementia_project.asr.transcribe import (
+    save_asr_result,
+    transcribe_with_whisper_pipeline,
+)
 
 
 def main() -> None:
@@ -22,7 +25,9 @@ def main() -> None:
     parser.add_argument("--out_dir", required=True, type=Path)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--model_name", type=str, default="openai/whisper-tiny")
-    parser.add_argument("--device", type=str, default=None, help="cuda or cpu (default: auto)")
+    parser.add_argument(
+        "--device", type=str, default=None, help="cuda or cpu (default: auto)"
+    )
     parser.add_argument("--language", type=str, default="en")
     parser.add_argument("--task", type=str, default="transcribe")
     parser.add_argument("--chunk_length_s", type=int, default=30)
@@ -48,7 +53,9 @@ def main() -> None:
                     "audio_path": str(audio_path.as_posix()),
                     "asr_dir": str(out.as_posix()),
                     "transcript_json": str(transcript_path.as_posix()),
-                    "words_json": str(words_path.as_posix()) if words_path.exists() else "",
+                    "words_json": (
+                        str(words_path.as_posix()) if words_path.exists() else ""
+                    ),
                 }
             )
             continue
@@ -74,7 +81,9 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = args.out_dir / "asr_manifest.csv"
-    pd.DataFrame(manifest_rows).to_csv(manifest_path, index=False, quoting=csv.QUOTE_MINIMAL)
+    pd.DataFrame(manifest_rows).to_csv(
+        manifest_path, index=False, quoting=csv.QUOTE_MINIMAL
+    )
     report = {
         "rows": int(len(manifest_rows)),
         "model_name": args.model_name,
@@ -90,5 +99,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

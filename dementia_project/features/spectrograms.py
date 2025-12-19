@@ -49,5 +49,3 @@ def log_mel_spectrogram(wav: torch.Tensor, cfg: MelSpecConfig) -> torch.Tensor:
     )(wav)
     log_mel = torch.log(mel + 1e-6)
     return log_mel  # (n_mels, time)
-
-

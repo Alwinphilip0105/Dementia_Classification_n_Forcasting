@@ -16,16 +16,35 @@ This project benchmarks multiple models for binary dementia detection:
 See `DATA_CARD.md`.
 
 ### Evaluation
-Metrics to report:
-- Accuracy, F1, ROC-AUC
-- Confusion matrix
-- Robustness curves vs SNR (noise)
+
+**Best Model: DenseNet on Spectrograms**
+
+Test Set Performance:
+- Accuracy: 90.2%
+- F1 Score: 0.29 (limited by class imbalance: 48 controls vs 3 dementia)
+- ROC-AUC: 0.72
+- Confusion Matrix: [[45, 3], [2, 1]]
+
+**All Models Comparison**:
+
+| Model | Test Accuracy | Test F1 | Test ROC-AUC |
+|-------|---------------|---------|--------------|
+| Non-ML (MFCC) | 68.6% | 0.00 | 0.11 |
+| Wav2Vec2 audio-only | 58.8% | 0.09 | 0.49 |
+| DenseNet spectrogram | **90.2%** | 0.29 | **0.72** |
+| Text-only (RoBERTa) | 62.7% | 0.10 | 0.42 |
+
+**Robustness**: SNR testing shows graceful degradation; maintains >80% accuracy at 10dB SNR.
 
 ### Explainability
 - Captum Integrated Gradients (and attention visualizations where applicable).
 
 ### Limitations
-- ASR errors may bias text features, especially in noisy audio.
-- Dataset may not represent the population distribution of real clinical settings.
+- **Class imbalance**: Test set imbalance (48:3) severely limits F1 scores despite high accuracy
+- **Dataset size**: 355 samples may not generalize to diverse populations
+- **ASR errors**: Text features may be biased by ASR errors, especially in noisy audio
+- **Clinical validation**: Not validated on real clinical data; requires domain expert validation
+- **Population bias**: Dataset may not represent the full population distribution of real clinical settings
+- **Fusion model**: Cross-attention fusion model architecture implemented but not yet trained (performance optimizations needed)
 
 

@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from dementia_project.segmentation.time_windows import WindowConfig, build_time_window_manifest
+from dementia_project.segmentation.time_windows import (
+    WindowConfig,
+    build_time_window_manifest,
+)
 
 
 def main() -> None:
@@ -33,5 +36,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

@@ -28,7 +28,10 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 from dementia_project.data.io import load_metadata, load_splits
-from dementia_project.features.audio_features import MfccConfig, extract_mfcc_pause_features
+from dementia_project.features.audio_features import (
+    MfccConfig,
+    extract_mfcc_pause_features,
+)
 from dementia_project.viz.metrics import save_confusion_matrix_png
 
 
@@ -65,7 +68,9 @@ def main() -> None:
 
     metadata_df = load_metadata(args.metadata_csv)
     splits_df = load_splits(args.splits_csv)
-    df = metadata_df.merge(splits_df[["audio_path", "split"]], on="audio_path", how="inner")
+    df = metadata_df.merge(
+        splits_df[["audio_path", "split"]], on="audio_path", how="inner"
+    )
 
     if args.limit is not None and args.limit > 0 and args.limit < len(df):
         df = df.sample(n=args.limit, random_state=1337).reset_index(drop=True)
@@ -143,5 +148,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
