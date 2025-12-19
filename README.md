@@ -146,6 +146,6 @@ All dependencies are:
 - ✅ Production-ready with no cost implications
 
 ## Contact
-- Alwin Philip
-- Lucas Liona
-- David Majomi
+- ap2823@scarletmail.rutgers.edu
+- ll1006@scarletmail.rutgers.edu
+- david.majomi@rutgers.edu

@@ -185,6 +185,11 @@ def main() -> None:
         title="DenseNet spectrogram baseline (test)",
     )
 
+    # Save model checkpoint for ONNX export
+    checkpoint_path = out_dir / "model_checkpoint.pth"
+    torch.save(model.state_dict(), checkpoint_path)
+    print(f"Saved model checkpoint to: {checkpoint_path}")
+
     print(f"Wrote metrics to: {out_dir / 'metrics.json'}")
 
 
