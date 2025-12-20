@@ -29,4 +29,5 @@ poetry run python -m dementia_project.export.run_onnx_export --model_type densen
 
 # Run Explainability and Generate Visualizations
 poetry run python -m dementia_project.viz.run_explainability --model_type densenet --metadata_csv "data/processed/metadata.csv" --splits_csv "data/processed/splits.csv" --out_dir "runs/explainability" --num_samples 5
-
+poetry run python -m dementia_project.explain.text_explain --model_dir runs/text_baseline --metadata_csv data/processed/metadata.csv --splits_csv data/processed/splits.csv --asr_manifest_csv data/processed/asr_
+whisper/asr_manifest.csv --out_dir runs/text_baseline/explanations --num_examples 5
