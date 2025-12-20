@@ -148,4 +148,4 @@ All dependencies are:
 ## Contact
 - ap2823@scarletmail.rutgers.edu
 - ll1006@scarletmail.rutgers.edu
-- david.majomi@rutgers.edu
+- dom22@scarletmail.rutgers.edu
