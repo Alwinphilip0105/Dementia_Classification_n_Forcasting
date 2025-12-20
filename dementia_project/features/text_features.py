@@ -7,19 +7,79 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from transformers import AutoModel, AutoTokenizer
 
 
+# ==================== Configuration ====================
+
+@dataclass(frozen=True)
+class TextConfig:
+    """Configuration for text feature extraction (training)."""
+
+    max_length: int = 512
+    model_name: str = "distilbert-base-uncased"
+
+
 @dataclass(frozen=True)
 class TextEmbedConfig:
-    """Configuration for text embedding extraction."""
+    """Configuration for text embedding extraction (inference)."""
 
     model_name: str = "roberta-base"
     max_length: int = 512
     device: str | None = None
 
+
+# ==================== Data Loading (for training) ====================
+
+def load_transcript(transcript_json_path: Path) -> str:
+    """Load transcript text from ASR output.
+
+    Args:
+        transcript_json_path: Path to transcript.json file
+
+    Returns:
+        Full transcript text as a string
+    """
+    with open(transcript_json_path, encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("text", "")
+
+
+def build_text_dataframe(
+    metadata_df: pd.DataFrame, asr_manifest_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Build a dataframe with audio_path, label, and transcript text.
+
+    Args:
+        metadata_df: Metadata with audio_path, label
+        asr_manifest_df: ASR manifest with audio_path, transcript_json
+
+    Returns:
+        DataFrame with columns: audio_path, label, text
+    """
+    df = metadata_df.merge(
+        asr_manifest_df[["audio_path", "transcript_json"]], on="audio_path", how="inner"
+    )
+
+    texts = []
+    for _, row in df.iterrows():
+        try:
+            text = load_transcript(Path(row["transcript_json"]))
+            texts.append(text)
+        except Exception as e:
+            print(f"Warning: Failed to load transcript for {row['audio_path']}: {e}")
+            texts.append("")
+
+    df["text"] = texts
+    df = df[df["text"].str.strip() != ""].reset_index(drop=True)
+
+    return df[["audio_path", "label", "text"]]
+
+
+# ==================== Embedding Extraction (for inference/fusion) ====================
 
 def load_text_model(
     cfg: TextEmbedConfig, device: torch.device | None = None
@@ -41,20 +101,6 @@ def load_text_model(
     model.eval()
 
     return model, tokenizer
-
-
-def load_transcript(transcript_json: Path) -> str:
-    """Load transcript text from a JSON file.
-
-    Args:
-        transcript_json: Path to transcript.json file.
-
-    Returns:
-        Transcript text string.
-    """
-    data = json.loads(transcript_json.read_text(encoding="utf-8"))
-    text = str(data.get("text", "")).strip()
-    return text
 
 
 @torch.no_grad()
@@ -93,15 +139,14 @@ def embed_text_mean_pool(
     ).to(device)
 
     outputs = model(**inputs)
-    # Mean pool over sequence length (excluding padding)
-    # Shape: [batch, seq_len, hidden] -> [batch, hidden]
     embeddings = outputs.last_hidden_state
     attention_mask = inputs["attention_mask"]
+
     # Mask out padding tokens
     masked_embeddings = embeddings * attention_mask.unsqueeze(-1)
     pooled = masked_embeddings.sum(dim=1) / attention_mask.sum(dim=1, keepdim=True)
-    result: np.ndarray = pooled.squeeze(0).cpu().numpy()
-    return result
+
+    return pooled.squeeze(0).cpu().numpy()
 
 
 def embed_file_mean_pool(

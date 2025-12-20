@@ -13,9 +13,11 @@ new_dementia = "dementia-20251218T112637Z-3-001"
 old_control = "nodementia-20251217T041501Z-1-001"
 new_control = "nodementia-20251218T113334Z-3-001"
 
-df["audio_path"] = df["audio_path"].str.replace(old_dementia, new_dementia, regex=False)
-df["audio_path"] = df["audio_path"].str.replace(old_control, new_control, regex=False)
-
+# Update ALL columns that contain paths
+for col in df.columns:
+    if df[col].dtype == "object":  # String columns only
+        df[col] = df[col].str.replace(old_dementia, new_dementia, regex=False)
+        df[col] = df[col].str.replace(old_control, new_control, regex=False)
 # Save back
 df.to_csv(manifest_path, index=False)
 

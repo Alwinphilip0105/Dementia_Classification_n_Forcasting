@@ -1,8 +1,4 @@
-"""Text-only baseline: Transformer embeddings -> sklearn classifier.
-
-This extracts text embeddings from ASR transcripts using a pretrained Transformer
-(e.g., RoBERTa) and trains a Logistic Regression classifier on top.
-"""
+"""Text-only baseline: This is a distilled Bert Model"""
 
 from __future__ import annotations
 
@@ -14,23 +10,41 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.linear_model import LogisticRegression
+import torch.nn as nn
+import torch.optim as optim
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, roc_auc_score
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
+from transformers import AutoModel, AutoTokenizer
 
 from dementia_project.data.io import load_metadata, load_splits
-from dementia_project.features.text_features import (
-    TextEmbedConfig,
-    embed_file_mean_pool,
-    load_text_model,
-)
+from dementia_project.features.text_features import build_text_dataframe
 from dementia_project.viz.metrics import save_confusion_matrix_png
 
 
+def validate_text_input(text: str, max_length: int) -> bool:
+    """Validate text input before processing."""
+    if not isinstance(text, str):
+        return False
+    if len(text.strip()) == 0:
+        return False
+    if len(text) > max_length * 10:  # Reasonable upper bound
+        return False
+    return True
+
+
 def sanitize_for_json(obj):
-    """Convert NaN/Inf to None for JSON serialization."""
+    """Helper function to recursively sanitize an object for JSON serialization.
+
+    Replaces NaN and infinite float values with None, and recursively
+    processes nested dictionaries and lists.
+
+    Args:
+        obj: Object to sanitize (can be any type).
+
+    Returns:
+        Sanitized object with NaN/inf values replaced by None.
+    """
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
     if isinstance(obj, dict):
@@ -40,157 +54,247 @@ def sanitize_for_json(obj):
     return obj
 
 
-def main() -> None:
+class TextDataset(Dataset):
+    """Dataset for text classification."""
+
+    def __init__(self, texts: list[str], labels: list[int], tokenizer, max_length: int):
+        self.texts = texts
+        self.labels = labels
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self) -> int:
+        return len(self.texts)
+
+    def __getitem__(self, idx: int):
+        text = str(self.texts[idx])
+        label = int(self.labels[idx])
+
+        encoding = self.tokenizer(
+            text,
+            max_length=self.max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        return {
+            "input_ids": encoding["input_ids"].squeeze(0),
+            "attention_mask": encoding["attention_mask"].squeeze(0),
+            "label": torch.tensor(label, dtype=torch.long),
+        }
+
+
+class TextClassifier(nn.Module):
+    """Transformer-based text classifier."""
+
+    def __init__(self, model_name: str, num_classes: int = 2):
+        super().__init__()
+        self.encoder = AutoModel.from_pretrained(model_name)
+        self.dropout = nn.Dropout(0.1)
+        self.classifier = nn.Linear(self.encoder.config.hidden_size, num_classes)
+
+    def forward(self, input_ids, attention_mask):
+        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+        # Use [CLS] token representation
+        pooled = outputs.last_hidden_state[:, 0, :]
+        pooled = self.dropout(pooled)
+        logits = self.classifier(pooled)
+        return logits
+
+
+def train_epoch(model, loader, optimizer, loss_fn, device):
+    """Train for one epoch."""
+    model.train()
+    total_loss = 0.0
+    for batch in tqdm(loader, desc="Training"):
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        labels = batch["label"].to(device)
+
+        optimizer.zero_grad()
+        logits = model(input_ids, attention_mask)
+        loss = loss_fn(logits, labels)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+    return total_loss / len(loader)
+
+
+def eval_model(model, loader, device):
+    """Evaluate model on a dataset."""
+    model.eval()
+    all_probs = []
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch in loader:
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["label"].to(device)
+
+            logits = model(input_ids, attention_mask)
+            probs = torch.softmax(logits, dim=1)[:, 1]
+            preds = (probs >= 0.5).long()
+
+            all_probs.extend(probs.cpu().numpy().tolist())
+            all_preds.extend(preds.cpu().numpy().tolist())
+            all_labels.extend(labels.cpu().numpy().tolist())
+
+    y_true = np.array(all_labels, dtype=np.int64)
+    y_pred = np.array(all_preds, dtype=np.int64)
+    y_prob = np.array(all_probs, dtype=np.float32)
+
+    metrics = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+    }
+
+    if len(np.unique(y_true)) == 2:
+        metrics["roc_auc"] = float(roc_auc_score(y_true, y_prob))
+    else:
+        metrics["roc_auc"] = float("nan")
+
+    metrics["confusion_matrix"] = confusion_matrix(
+        y_true, y_pred, labels=[0, 1]
+    ).tolist()
+
+    return metrics
+
+
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--metadata_csv", required=True, type=Path)
     parser.add_argument("--splits_csv", required=True, type=Path)
     parser.add_argument("--asr_manifest_csv", required=True, type=Path)
     parser.add_argument("--out_dir", required=True, type=Path)
-    parser.add_argument("--model_name", default="roberta-base")
+    parser.add_argument("--model_name", default="distilbert-base-uncased")
     parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
 
-    # Load data
+    import random
+
+    torch.manual_seed(1337)
+    np.random.seed(1337)
+    random.seed(1337)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(1337)
+
     metadata_df = load_metadata(args.metadata_csv)
     splits_df = load_splits(args.splits_csv)
     asr_manifest_df = pd.read_csv(args.asr_manifest_csv)
 
-    # Merge all dataframes
-    df = metadata_df.merge(
-        splits_df[["audio_path", "split"]], on="audio_path", how="inner"
-    )
-    df = df.merge(
-        asr_manifest_df[["audio_path", "transcript_json"]],
-        on="audio_path",
-        how="inner",
-    )
+    # df has columns (audio_path, label, text) where text is the the transcript as a string
+    text_df = build_text_dataframe(metadata_df, asr_manifest_df)
 
-    # Filter out rows without transcripts
-    df = df[df["transcript_json"].notna()].copy()
-    df["transcript_json"] = df["transcript_json"].astype(str)
+    # split this into train, test, validate df's
+    df = text_df.merge(splits_df[["audio_path", "split"]], on="audio_path", how="inner")
 
     if args.limit is not None and args.limit > 0 and args.limit < len(df):
         df = df.sample(n=args.limit, random_state=1337).reset_index(drop=True)
 
-    print(f"Processing {len(df)} samples with transcripts")
+    train_df = df[df["split"] == "train"].reset_index(drop=True)
+    valid_df = df[df["split"] == "valid"].reset_index(drop=True)
+    test_df = df[df["split"] == "test"].reset_index(drop=True)
 
+    print(f"Train: {len(train_df)}, Valid: {len(valid_df)}, Test: {len(test_df)}")
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+
+    # Create datasets and dataloaders
+    train_dataset = TextDataset(
+        train_df["text"].tolist(),
+        train_df["label"].tolist(),
+        tokenizer,
+        args.max_length,
+    )
+    valid_dataset = TextDataset(
+        valid_df["text"].tolist(),
+        valid_df["label"].tolist(),
+        tokenizer,
+        args.max_length,
+    )
+    test_dataset = TextDataset(
+        test_df["text"].tolist(), test_df["label"].tolist(), tokenizer, args.max_length
+    )
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+
+    # Initialize model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    cfg = TextEmbedConfig(
-        model_name=args.model_name, max_length=int(args.max_length), device=str(device)
-    )
-    model, tokenizer = load_text_model(cfg, device)
+    model = TextClassifier(args.model_name, num_classes=2).to(device)
 
-    X_list: list[np.ndarray] = []
-    y_list: list[int] = []
-    split_list: list[str] = []
+    # Training setup
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+    loss_fn = nn.CrossEntropyLoss()
 
-    for row in tqdm(df.to_dict(orient="records"), desc="Extracting text embeddings"):
-        transcript_path = Path(str(row["transcript_json"]))
-        if not transcript_path.exists():
-            print(f"Warning: transcript not found: {transcript_path}")
-            continue
+    # Training loop
+    for epoch in range(args.epochs):
+        print(f"\nEpoch {epoch + 1}/{args.epochs}")
+        train_loss = train_epoch(model, train_loader, optimizer, loss_fn, device)
+        print(f"Train loss: {train_loss:.4f}")
 
-        try:
-            emb = embed_file_mean_pool(
-                transcript_json=transcript_path,
-                cfg=cfg,
-                model=model,
-                tokenizer=tokenizer,
-                device=device,
-            )
-            X_list.append(emb)
-            y_list.append(int(row["label"]))
-            split_list.append(str(row["split"]))
-        except Exception as e:
-            print(f"Error processing {transcript_path}: {e}")
-            continue
-
-    if not X_list:
-        raise ValueError("No valid embeddings extracted")
-
-    X = np.vstack(X_list)
-    y = np.array(y_list)
-    splits = np.array(split_list)
-
-    print(f"Extracted embeddings: shape={X.shape}, dtype={X.dtype}")
-
-    # Train classifier
-    clf = Pipeline(
-        [
-            ("scaler", StandardScaler()),
-            ("lr", LogisticRegression(max_iter=5000, random_state=1337)),
-        ]
-    )
-
-    train_mask = splits == "train"
-    valid_mask = splits == "valid"
-    test_mask = splits == "test"
-
-    X_train, y_train = X[train_mask], y[train_mask]
-    X_valid, y_valid = X[valid_mask], y[valid_mask]
-    X_test, y_test = X[test_mask], y[test_mask]
-
-    print(f"Train: {len(X_train)}, Valid: {len(X_valid)}, Test: {len(X_test)}")
-
-    clf.fit(X_train, y_train)
-
-    # Evaluate
-    metrics: dict[str, dict[str, float | list]] = {}
-
-    for split_name, X_split, y_split in [
-        ("train", X_train, y_train),
-        ("valid", X_valid, y_valid),
-        ("test", X_test, y_test),
-    ]:
-        if len(X_split) == 0:
-            metrics[split_name] = {
-                "accuracy": None,
-                "f1": None,
-                "roc_auc": None,
-            }
-            continue
-
-        y_pred = clf.predict(X_split)
-        y_proba = clf.predict_proba(X_split)[:, 1]
-
-        acc = accuracy_score(y_split, y_pred)
-        f1 = f1_score(y_split, y_pred, zero_division=0)
-        try:
-            roc_auc = roc_auc_score(y_split, y_proba)
-        except ValueError:
-            roc_auc = None
-
-        cm = confusion_matrix(y_split, y_pred).tolist()
-
-        metrics[split_name] = {
-            "accuracy": float(acc),
-            "f1": float(f1),
-            "roc_auc": float(roc_auc) if roc_auc is not None else None,
-            "confusion_matrix": cm,
-        }
-
-    metrics["n"] = len(X)
-
-    # Save outputs
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    metrics_sanitized = sanitize_for_json(metrics)
-    (args.out_dir / "metrics.json").write_text(json.dumps(metrics_sanitized, indent=2))
-
-    # Save confusion matrix plot for test set
-    if len(X_test) > 0:
-        cm_test = np.array(metrics["test"]["confusion_matrix"])
-        save_confusion_matrix_png(
-            cm=cm_test,
-            labels=["No Dementia", "Dementia"],
-            out_path=args.out_dir / "confusion_matrix_test.png",
-            title="Text Baseline (Test Set)",
+        # Evaluate on validation set
+        valid_metrics = eval_model(model, valid_loader, device)
+        print(
+            f"Valid - Acc: {valid_metrics['accuracy']:.4f}, F1: {valid_metrics['f1']:.4f}"
         )
 
-    print(f"Wrote metrics to: {args.out_dir / 'metrics.json'}")
-    print(f"Test accuracy: {metrics['test'].get('accuracy', 'N/A')}")
-    print(f"Test F1: {metrics['test'].get('f1', 'N/A')}")
-    print(f"Test ROC-AUC: {metrics['test'].get('roc_auc', 'N/A')}")
+    # Save model checkpoint
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "model_name": args.model_name,
+            "num_classes": 2,
+        },
+        args.out_dir / "model.pth",
+    )
+
+    # Save config
+    config_dict = {
+        "model_name": args.model_name,
+        "max_length": args.max_length,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+    }
+    (args.out_dir / "config.json").write_text(json.dumps(config_dict, indent=2))
+
+    # Final evaluation
+    metrics = {
+        "train": eval_model(model, train_loader, device),
+        "valid": eval_model(model, valid_loader, device),
+        "test": eval_model(model, test_loader, device),
+        "n": int(len(df)),
+    }
+
+    # Save results
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    (args.out_dir / "metrics.json").write_text(
+        json.dumps(sanitize_for_json(metrics), indent=2, allow_nan=False)
+    )
+
+    # Save confusion matrix
+    cm = np.array(metrics["test"]["confusion_matrix"], dtype=np.int64)
+    save_confusion_matrix_png(
+        cm=cm,
+        labels=["no_dementia", "dementia"],
+        out_path=args.out_dir / "confusion_matrix_test.png",
+        title="Text-only baseline (test)",
+    )
+
+    print(f"\nWrote metrics to: {args.out_dir / 'metrics.json'}")
+    print(f"Test accuracy: {metrics['test']['accuracy']:.4f}")
+    print(f"Test F1: {metrics['test']['f1']:.4f}")
 
 
 if __name__ == "__main__":

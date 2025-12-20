@@ -1,11 +1,6 @@
 Dementia_Classification_n_Forcasting/
 │
-├── .cursor/
-│   └── plans/
-│       └── EXECUTION_PLAN.md
-│
 ├── .gitignore
-│
 ├── configs/
 │   └── default.yaml
 │
@@ -33,8 +28,6 @@ Dementia_Classification_n_Forcasting/
 │   └── dementia/
 │       └── [person_name]/
 │           └── *.wav
-│
-├── dementia-20251217T041331Z-1-001.zip   # Original zip (ignored by git)
 │
 ├── DementiaNet - dementia.csv             # Source metadata CSV
 │
@@ -90,10 +83,9 @@ Dementia_Classification_n_Forcasting/
 │       └── [person_name]/
 │           └── *.wav
 │
-├── nodementia-20251217T041501Z-1-001.zip  # Original zip (ignored by git)
-│
 ├── notebooks/
 │   └── final_report.ipynb                 # Final report notebook
+│   └── BERT_CARD.md                 # Model Card for BERT
 │
 ├── runs/                                  # Training outputs
 │   ├── densenet_spec_full_cuda/

@@ -1,5 +1,7 @@
 ## DATA_CARD: Dementia Audio Classification Dataset
 
+We got this dataset from the Dementia Net project by Shreyas Gite https://github.com/shreyasgite/dementianet
+
 ### Source
 - **Dementia class audio**: `dementia-20251217T041331Z-1-001/` (WAV files)
 - **No-dementia class audio**: `nodementia-20251217T041501Z-1-001/` (WAV files)
