@@ -2,7 +2,10 @@
 
 from dementia_project.models.fusion_model import (
     CrossAttentionFusion,
-    MultimodalFusionClassifier,
+    FusionClassifier,
 )
 
-__all__ = ["CrossAttentionFusion", "MultimodalFusionClassifier"]
+# Backward compatibility alias
+MultimodalFusionClassifier = FusionClassifier
+
+__all__ = ["CrossAttentionFusion", "FusionClassifier", "MultimodalFusionClassifier"]

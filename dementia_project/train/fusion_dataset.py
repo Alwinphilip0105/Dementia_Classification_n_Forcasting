@@ -1,194 +1,234 @@
-"""Dataset for multimodal fusion (word-level audio + text)."""
+"""Fusion dataset: Combines text transcripts with word-level audio embeddings.
+
+This dataset loads:
+1. Text transcripts (for DistilBERT encoding)
+2. Pre-computed word-level audio embeddings (from align_audio.py)
+3. Labels (dementia vs control)
+
+For the fusion model with cross-attention between text and audio.
+"""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pandas as pd
 import torch
-import torchaudio
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer
 
-from dementia_project.features.text_features import (
-    TextEmbedConfig,
-    embed_text_mean_pool,
-    load_text_model,
-    load_transcript,
-)
-from dementia_project.features.wav2vec2_embed import (
-    Wav2Vec2EmbedConfig,
-    embed_file_mean_pool,
-    load_wav2vec2,
-)
+from dementia_project.features.text_features import build_text_dataframe
 
 
-class MultimodalFusionDataset(Dataset):
-    """Dataset for multimodal fusion at word level.
+class FusionDataset(Dataset):
+    """Dataset for multimodal fusion training.
 
-    For each audio file:
-    - Load word-level segments from word_segments.csv
-    - Extract Wav2Vec2 embeddings for each word's audio
-    - Load full transcript and extract text embeddings
-    - Return aligned word-level audio embeddings + text embedding
+    Combines text transcripts with word-level audio embeddings.
     """
 
     def __init__(
         self,
-        word_segments_df: pd.DataFrame,
-        asr_manifest_df: pd.DataFrame,
-        text_cfg: TextEmbedConfig,
-        audio_cfg: Wav2Vec2EmbedConfig,
-        text_model: torch.nn.Module,
-        text_tokenizer,
-        audio_model: torch.nn.Module,
-        audio_feature_extractor,
-        device: torch.device,
-        max_words_per_sample: int = 50,
+        df: pd.DataFrame,
+        word_embed_dir: Path,
+        tokenizer: AutoTokenizer,
+        max_text_length: int = 512,
+        max_audio_words: int = 256,
     ):
-        """Initialize multimodal fusion dataset.
+        """Initialize fusion dataset.
 
         Args:
-            word_segments_df: DataFrame with word-level segments.
-            asr_manifest_df: ASR manifest with transcript_json paths.
-            text_cfg: Configuration for text embedding.
-            audio_cfg: Configuration for audio embedding.
-            text_model: Pre-loaded text encoder model.
-            text_tokenizer: Pre-loaded text tokenizer.
-            audio_model: Pre-loaded audio encoder model.
-            audio_feature_extractor: Pre-loaded audio feature extractor.
-            device: Device to run inference on.
-            max_words_per_sample: Maximum words per sample (truncate if longer).
+            df: DataFrame with columns: audio_path, text, label
+            word_embed_dir: Directory containing .pt word embedding files
+            tokenizer: Text tokenizer (e.g., DistilBERT)
+            max_text_length: Maximum text sequence length
+            max_audio_words: Maximum number of audio word embeddings
         """
-        self.word_segments_df = word_segments_df.reset_index(drop=True)
-        self.asr_manifest_df = asr_manifest_df.set_index("audio_path")
-        self.text_cfg = text_cfg
-        self.audio_cfg = audio_cfg
-        self.text_model = text_model
-        self.text_tokenizer = text_tokenizer
-        self.audio_model = audio_model
-        self.audio_feature_extractor = audio_feature_extractor
-        self.device = device
-        self.max_words_per_sample = max_words_per_sample
-
-        # Group by audio_path to process words per audio file
-        self.audio_groups = self.word_segments_df.groupby("audio_path")
+        self.df = df.reset_index(drop=True)
+        self.word_embed_dir = Path(word_embed_dir)
+        self.tokenizer = tokenizer
+        self.max_text_length = max_text_length
+        self.max_audio_words = max_audio_words
 
     def __len__(self) -> int:
-        return len(self.audio_groups)
+        return len(self.df)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Get a sample.
+    def _get_word_embed_path(self, audio_path: str) -> Path:
+        """Convert audio_path to word embedding .pt filename.
+
+        Args:
+            audio_path: Original audio path (e.g., "dementia-20251218.../file.wav")
 
         Returns:
-            Tuple of (word_audio_embeddings, text_embedding, label)
-            - word_audio_embeddings: [num_words, audio_dim]
-            - text_embedding: [text_dim] (mean-pooled)
-            - label: scalar
+            Path to corresponding .pt file
         """
-        audio_path = list(self.audio_groups.groups.keys())[idx]
-        words_df = self.audio_groups.get_group(audio_path)
+        # Match the naming convention from align_audio.py
+        safe_name = audio_path.replace("/", "__").replace(" ", "_")
+        return self.word_embed_dir / f"{safe_name}.pt"
 
-        # Get label (should be same for all words in same audio)
-        label = int(words_df.iloc[0]["label"])
+    def _load_word_embeddings(self, audio_path: str) -> torch.Tensor:
+        """Load word-level audio embeddings from .pt file.
 
-        # Load transcript
-        if audio_path not in self.asr_manifest_df.index:
-            raise ValueError(f"Audio path not in ASR manifest: {audio_path}")
+        Args:
+            audio_path: Original audio path
 
-        transcript_json = Path(
-            str(self.asr_manifest_df.loc[audio_path, "transcript_json"])
+        Returns:
+            Tensor of shape [num_words, 768] (padded/truncated to max_audio_words)
+        """
+        embed_path = self._get_word_embed_path(audio_path)
+
+        if not embed_path.exists():
+            # Return zero embeddings if file not found
+            return torch.zeros(self.max_audio_words, 768)
+
+        # Load embeddings
+        data = torch.load(embed_path, weights_only=False)
+        num_words = data.get("num_words", 0)
+
+        if num_words == 0:
+            return torch.zeros(self.max_audio_words, 768)
+
+        # Extract word embeddings in order
+        word_vectors = []
+        for i in range(num_words):
+            key = f"word_{i}"
+            if key in data:
+                word_vectors.append(data[key])
+
+        if len(word_vectors) == 0:
+            return torch.zeros(self.max_audio_words, 768)
+
+        # Stack into [num_words, 768]
+        embeddings = torch.stack(word_vectors, dim=0)
+
+        # Truncate or pad to max_audio_words
+        if embeddings.shape[0] > self.max_audio_words:
+            embeddings = embeddings[: self.max_audio_words, :]
+        elif embeddings.shape[0] < self.max_audio_words:
+            pad_size = self.max_audio_words - embeddings.shape[0]
+            padding = torch.zeros(pad_size, 768)
+            embeddings = torch.cat([embeddings, padding], dim=0)
+
+        return embeddings
+
+    def _create_audio_mask(self, audio_path: str) -> torch.Tensor:
+        """Create attention mask for audio word embeddings.
+
+        Args:
+            audio_path: Original audio path
+
+        Returns:
+            Binary mask [max_audio_words] where 1 = valid word, 0 = padding
+        """
+        embed_path = self._get_word_embed_path(audio_path)
+
+        if not embed_path.exists():
+            return torch.zeros(self.max_audio_words, dtype=torch.long)
+
+        data = torch.load(embed_path, weights_only=False)
+        num_words = min(data.get("num_words", 0), self.max_audio_words)
+
+        # Create mask: 1 for valid words, 0 for padding
+        mask = torch.zeros(self.max_audio_words, dtype=torch.long)
+        if num_words > 0:
+            mask[:num_words] = 1
+
+        return mask
+
+    def __getitem__(self, idx: int):
+        """Get a single sample.
+
+        Returns:
+            Dictionary with keys:
+                - text_input_ids: [max_text_length]
+                - text_attention_mask: [max_text_length]
+                - audio_embeddings: [max_audio_words, 768]
+                - audio_mask: [max_audio_words]
+                - label: scalar
+        """
+        row = self.df.iloc[idx]
+
+        audio_path = row["audio_path"]
+        text = str(row["text"])
+        label = int(row["label"])
+
+        # Tokenize text
+        text_encoding = self.tokenizer(
+            text,
+            max_length=self.max_text_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
         )
-        if not transcript_json.exists():
-            raise FileNotFoundError(f"Transcript not found: {transcript_json}")
 
-        transcript_text = load_transcript(transcript_json)
-        text_emb = embed_text_mean_pool(
-            transcript_text,
-            self.text_cfg,
-            self.text_model,
-            self.text_tokenizer,
-            self.device,
-        )
-        text_emb_tensor = torch.from_numpy(text_emb).float()
+        # Load word-level audio embeddings
+        audio_embeddings = self._load_word_embeddings(audio_path)
+        audio_mask = self._create_audio_mask(audio_path)
 
-        # Extract word-level audio embeddings
-        audio_path_obj = Path(str(audio_path))
-        word_audio_embs: list[torch.Tensor] = []
+        return {
+            "text_input_ids": text_encoding["input_ids"].squeeze(0),
+            "text_attention_mask": text_encoding["attention_mask"].squeeze(0),
+            "audio_embeddings": audio_embeddings,  # [max_audio_words, 768]
+            "audio_mask": audio_mask,  # [max_audio_words]
+            "label": torch.tensor(label, dtype=torch.long),
+        }
 
-        for _, word_row in words_df.iterrows():
-            start_sec = float(word_row["start_sec"])
-            end_sec = float(word_row["end_sec"])
 
-            # Load audio and extract segment
-            try:
-                wav, sr = torchaudio.load(str(audio_path_obj))
-                if wav.ndim == 2 and wav.shape[0] > 1:
-                    wav = wav.mean(dim=0, keepdim=True)
-                wav = wav.squeeze(0)
+def build_fusion_dataloaders(
+    metadata_df: pd.DataFrame,
+    splits_df: pd.DataFrame,
+    asr_manifest_df: pd.DataFrame,
+    word_embed_dir: Path,
+    tokenizer: AutoTokenizer,
+    batch_size: int = 8,
+    max_text_length: int = 512,
+    max_audio_words: int = 256,
+):
+    """Build train/valid/test dataloaders for fusion model.
 
-                # Resample to 16kHz if needed
-                if sr != 16000:
-                    resampler = torchaudio.transforms.Resample(
-                        orig_freq=sr, new_freq=16000
-                    )
-                    wav = resampler(wav)
+    Args:
+        metadata_df: Metadata with audio_path, label
+        splits_df: Splits with audio_path, split
+        asr_manifest_df: ASR manifest with audio_path, transcript_json
+        word_embed_dir: Directory with word embedding .pt files
+        tokenizer: Text tokenizer
+        batch_size: Batch size for dataloaders
+        max_text_length: Max text sequence length
+        max_audio_words: Max audio word embeddings
 
-                # Extract segment
-                start_sample = int(start_sec * 16000)
-                end_sample = int(end_sec * 16000)
-                segment = wav[start_sample:end_sample]
+    Returns:
+        Dictionary with keys: train_loader, valid_loader, test_loader
+    """
+    # Build text dataframe
+    text_df = build_text_dataframe(metadata_df, asr_manifest_df)
 
-                # Pad or truncate to fixed length if needed
-                target_length = int(self.audio_cfg.max_audio_sec * 16000)
-                if len(segment) < target_length:
-                    segment = torch.nn.functional.pad(
-                        segment, (0, target_length - len(segment))
-                    )
-                elif len(segment) > target_length:
-                    segment = segment[:target_length]
+    # Merge with splits
+    df = text_df.merge(splits_df[["audio_path", "split"]], on="audio_path", how="inner")
 
-                # Extract embedding using Wav2Vec2
-                # Save segment to temp file for wav2vec2 function
-                import tempfile
+    # Create datasets for each split
+    train_df = df[df["split"] == "train"].reset_index(drop=True)
+    valid_df = df[df["split"] == "valid"].reset_index(drop=True)
+    test_df = df[df["split"] == "test"].reset_index(drop=True)
 
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    torchaudio.save(tmp.name, segment.unsqueeze(0), 16000)
-                    word_emb = embed_file_mean_pool(
-                        Path(tmp.name),
-                        self.audio_cfg,
-                        self.audio_model,
-                        self.audio_feature_extractor,
-                        self.device,
-                    )
-                    Path(tmp.name).unlink()
+    train_dataset = FusionDataset(
+        train_df, word_embed_dir, tokenizer, max_text_length, max_audio_words
+    )
+    valid_dataset = FusionDataset(
+        valid_df, word_embed_dir, tokenizer, max_text_length, max_audio_words
+    )
+    test_dataset = FusionDataset(
+        test_df, word_embed_dir, tokenizer, max_text_length, max_audio_words
+    )
 
-                word_audio_embs.append(torch.from_numpy(word_emb).float())
+    # Create dataloaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-            except Exception:
-                # Skip words with errors, use zero embedding
-                # Default Wav2Vec2-base dimension is 768
-                word_audio_embs.append(torch.zeros(768))
-
-        # Stack word embeddings
-        if not word_audio_embs:
-            # Fallback: single zero embedding
-            word_audio_embs = [torch.zeros(768)]
-
-        # Truncate if too many words
-        if len(word_audio_embs) > self.max_words_per_sample:
-            word_audio_embs = word_audio_embs[: self.max_words_per_sample]
-
-        word_audio_stack = torch.stack(word_audio_embs)  # [num_words, audio_dim]
-
-        # For cross-attention, we need:
-        # - text_emb: [1, text_dim] (single embedding representing full transcript)
-        # - audio_emb: [num_words, audio_dim] (word-level embeddings)
-        # The model will expand text_emb to match audio sequence length
-        text_emb_expanded = text_emb_tensor.unsqueeze(0)  # [1, text_dim]
-
-        return (
-            word_audio_stack,
-            text_emb_expanded,
-            torch.tensor(label, dtype=torch.long),
-        )
+    return {
+        "train": train_loader,
+        "valid": valid_loader,
+        "test": test_loader,
+        "train_size": len(train_df),
+        "valid_size": len(valid_df),
+        "test_size": len(test_df),
+    }

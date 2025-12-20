@@ -1,101 +1,50 @@
-"""Training script for multimodal fusion model."""
+"""Train multimodal fusion model with frozen encoders.
+
+UPDATED VERSION: Uses pre-computed word-level audio embeddings for efficiency.
+
+This script:
+1. Loads pre-computed word-level audio embeddings from align_audio.py
+2. Uses frozen DistilBERT for text encoding
+3. Trains cross-attention fusion layer + classifier
+4. Evaluates on train/valid/test splits
+5. Saves model, metrics, and config
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import random
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, roc_auc_score
-from torch.utils.data import DataLoader
 from tqdm import tqdm
+from transformers import AutoTokenizer
 
 from dementia_project.data.io import load_metadata, load_splits
-from dementia_project.features.text_features import (
-    TextEmbedConfig,
-    load_text_model,
-)
-from dementia_project.features.wav2vec2_embed import (
-    Wav2Vec2EmbedConfig,
-    load_wav2vec2,
-)
-from dementia_project.models.fusion_model import MultimodalFusionClassifier
-from dementia_project.train.fusion_dataset import MultimodalFusionDataset
+from dementia_project.models.fusion_model import FusionClassifier
+from dementia_project.train.fusion_dataset import build_fusion_dataloaders
 from dementia_project.viz.metrics import save_confusion_matrix_png
 
 
-def collate_fn(batch):
-    """Custom collate function to handle variable-length sequences."""
-    word_audio_list, text_emb_list, labels = zip(*batch)
-
-    # Pad word-level audio embeddings to same length
-    max_words = max(a.shape[0] for a in word_audio_list)
-    audio_dim = word_audio_list[0].shape[1]
-
-    padded_audio = []
-    for audio_seq in word_audio_list:
-        pad_length = max_words - audio_seq.shape[0]
-        if pad_length > 0:
-            padding = torch.zeros(pad_length, audio_dim)
-            padded = torch.cat([audio_seq, padding], dim=0)
-        else:
-            padded = audio_seq
-        padded_audio.append(padded)
-
-    # Stack
-    word_audio_batch = torch.stack(padded_audio)  # [batch, max_words, audio_dim]
-    text_emb_batch = torch.stack(text_emb_list)  # [batch, 1, text_dim]
-    labels_batch = torch.stack(labels)  # [batch]
-
-    return word_audio_batch, text_emb_batch, labels_batch
-
-
-def eval_model(
-    model: nn.Module, loader: DataLoader, device: torch.device
-) -> dict[str, float | list]:
-    """Evaluate model on a data loader."""
-    model.eval()
-    all_probs: list[float] = []
-    all_preds: list[int] = []
-    all_y: list[int] = []
-
-    with torch.no_grad():
-        for word_audio, text_emb, y in loader:
-            word_audio = word_audio.to(device)
-            text_emb = text_emb.to(device)
-            y = y.to(device)
-
-            logits = model(word_audio, text_emb)
-            probs = torch.softmax(logits, dim=1)[:, 1]
-            preds = (probs >= 0.5).long()
-
-            all_probs.extend(probs.detach().cpu().numpy().tolist())
-            all_preds.extend(preds.detach().cpu().numpy().tolist())
-            all_y.extend(y.detach().cpu().numpy().tolist())
-
-    y_true = np.array(all_y, dtype=np.int64)
-    y_pred = np.array(all_preds, dtype=np.int64)
-    y_prob = np.array(all_probs, dtype=np.float32)
-
-    out = {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
-    }
-    if len(np.unique(y_true)) == 2:
-        out["roc_auc"] = float(roc_auc_score(y_true, y_prob))
-    else:
-        out["roc_auc"] = None
-    out["confusion_matrix"] = confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist()
-    return out
-
-
 def sanitize_for_json(obj):
-    """Convert NaN/Inf to None for JSON serialization."""
+    """Helper function to recursively sanitize an object for JSON serialization.
+
+    Replaces NaN and infinite float values with None, and recursively
+    processes nested dictionaries and lists.
+
+    Args:
+        obj: Object to sanitize (can be any type).
+
+    Returns:
+        Sanitized object with NaN/inf values replaced by None.
+    """
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
     if isinstance(obj, dict):
@@ -105,191 +54,283 @@ def sanitize_for_json(obj):
     return obj
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
+def train_epoch(model, loader, optimizer, loss_fn, device):
+    """Train for one epoch.
+
+    Args:
+        model: Fusion model
+        loader: Training dataloader
+        optimizer: Optimizer
+        loss_fn: Loss function
+        device: Device to train on
+
+    Returns:
+        Average training loss
+    """
+    model.train()
+    total_loss = 0.0
+
+    for batch in tqdm(loader, desc="Training"):
+        text_input_ids = batch["text_input_ids"].to(device)
+        text_attention_mask = batch["text_attention_mask"].to(device)
+        audio_embeddings = batch["audio_embeddings"].to(device)
+        audio_mask = batch["audio_mask"].to(device)
+        labels = batch["label"].to(device)
+
+        optimizer.zero_grad()
+
+        logits = model(
+            text_input_ids=text_input_ids,
+            text_attention_mask=text_attention_mask,
+            audio_embeddings=audio_embeddings,
+            audio_mask=audio_mask,
+        )
+
+        loss = loss_fn(logits, labels)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+    return total_loss / len(loader)
+
+
+def eval_model(model, loader, device):
+    """Evaluate model on a dataset.
+
+    Args:
+        model: Fusion model
+        loader: Evaluation dataloader
+        device: Device to evaluate on
+
+    Returns:
+        Dictionary with metrics: accuracy, f1, roc_auc, confusion_matrix
+    """
+    model.eval()
+    all_probs = []
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch in loader:
+            text_input_ids = batch["text_input_ids"].to(device)
+            text_attention_mask = batch["text_attention_mask"].to(device)
+            audio_embeddings = batch["audio_embeddings"].to(device)
+            audio_mask = batch["audio_mask"].to(device)
+            labels = batch["label"].to(device)
+
+            logits = model(
+                text_input_ids=text_input_ids,
+                text_attention_mask=text_attention_mask,
+                audio_embeddings=audio_embeddings,
+                audio_mask=audio_mask,
+            )
+
+            probs = torch.softmax(logits, dim=1)[:, 1]
+            preds = (probs >= 0.5).long()
+
+            all_probs.extend(probs.cpu().numpy().tolist())
+            all_preds.extend(preds.cpu().numpy().tolist())
+            all_labels.extend(labels.cpu().numpy().tolist())
+
+    y_true = np.array(all_labels, dtype=np.int64)
+    y_pred = np.array(all_preds, dtype=np.int64)
+    y_prob = np.array(all_probs, dtype=np.float32)
+
+    metrics = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+    }
+
+    if len(np.unique(y_true)) == 2:
+        metrics["roc_auc"] = float(roc_auc_score(y_true, y_prob))
+    else:
+        metrics["roc_auc"] = float("nan")
+
+    metrics["confusion_matrix"] = confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist()
+
+    return metrics
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Train multimodal fusion model with frozen encoders"
+    )
     parser.add_argument("--metadata_csv", required=True, type=Path)
     parser.add_argument("--splits_csv", required=True, type=Path)
-    parser.add_argument("--word_segments_csv", required=True, type=Path)
     parser.add_argument("--asr_manifest_csv", required=True, type=Path)
+    parser.add_argument("--word_embed_dir", required=True, type=Path)
     parser.add_argument("--out_dir", required=True, type=Path)
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--text_model", default="roberta-base")
-    parser.add_argument("--audio_model", default="facebook/wav2vec2-base-960h")
-    parser.add_argument("--max_words_per_sample", type=int, default=50)
+    parser.add_argument("--text_model_name", default="distilbert-base-uncased")
+    parser.add_argument("--max_text_length", type=int, default=512)
+    parser.add_argument("--max_audio_words", type=int, default=256)
+    parser.add_argument("--hidden_dim", type=int, default=256)
+    parser.add_argument("--num_heads", type=int, default=4)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--freeze_text_encoder", action="store_true", default=True)
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
 
-    # Load data
-    metadata_df = load_metadata(args.metadata_csv)
-    splits_df = load_splits(args.splits_csv)
-    word_segments_df = pd.read_csv(args.word_segments_csv)
-    asr_manifest_df = pd.read_csv(args.asr_manifest_csv)
-
-    # Merge to get labels and splits for word segments
-    word_segments_df = word_segments_df.merge(
-        metadata_df[["audio_path", "label"]], on="audio_path", how="left"
-    )
-    word_segments_df = word_segments_df.merge(
-        splits_df[["audio_path", "split"]], on="audio_path", how="left"
-    )
-
-    # Filter by split
-    train_words = word_segments_df[word_segments_df["split"] == "train"]
-    valid_words = word_segments_df[word_segments_df["split"] == "valid"]
-    test_words = word_segments_df[word_segments_df["split"] == "test"]
-
-    if args.limit is not None:
-        # Limit by unique audio files
-        train_audio = train_words["audio_path"].unique()[: args.limit]
-        train_words = train_words[train_words["audio_path"].isin(train_audio)]
-
-    print(f"Train: {train_words['audio_path'].nunique()} audio files")
-    print(f"Valid: {valid_words['audio_path'].nunique()} audio files")
-    print(f"Test: {test_words['audio_path'].nunique()} audio files")
+    # Set random seeds
+    random.seed(1337)
+    np.random.seed(1337)
+    torch.manual_seed(1337)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(1337)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Load encoders
-    text_cfg = TextEmbedConfig(model_name=args.text_model, max_length=512)
-    audio_cfg = Wav2Vec2EmbedConfig(model_name=args.audio_model, max_audio_sec=2.0)
+    # Load metadata
+    print("Loading metadata...")
+    metadata_df = load_metadata(args.metadata_csv)
+    splits_df = load_splits(args.splits_csv)
+    asr_manifest_df = pd.read_csv(args.asr_manifest_csv)
 
-    print("Loading text encoder...")
-    text_model, text_tokenizer = load_text_model(text_cfg, device)
-    print("Loading audio encoder...")
-    audio_model, audio_feature_extractor = load_wav2vec2(audio_cfg, device)
+    # Load tokenizer
+    print(f"Loading tokenizer: {args.text_model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(args.text_model_name)
 
-    # Create datasets
-    train_dataset = MultimodalFusionDataset(
-        train_words,
-        asr_manifest_df,
-        text_cfg,
-        audio_cfg,
-        text_model,
-        text_tokenizer,
-        audio_model,
-        audio_feature_extractor,
-        device,
-        max_words_per_sample=int(args.max_words_per_sample),
-    )
-    valid_dataset = MultimodalFusionDataset(
-        valid_words,
-        asr_manifest_df,
-        text_cfg,
-        audio_cfg,
-        text_model,
-        text_tokenizer,
-        audio_model,
-        audio_feature_extractor,
-        device,
-        max_words_per_sample=int(args.max_words_per_sample),
-    )
-    test_dataset = MultimodalFusionDataset(
-        test_words,
-        asr_manifest_df,
-        text_cfg,
-        audio_cfg,
-        text_model,
-        text_tokenizer,
-        audio_model,
-        audio_feature_extractor,
-        device,
-        max_words_per_sample=int(args.max_words_per_sample),
+    # Build dataloaders
+    print("Building fusion dataloaders...")
+    dataloaders = build_fusion_dataloaders(
+        metadata_df=metadata_df,
+        splits_df=splits_df,
+        asr_manifest_df=asr_manifest_df,
+        word_embed_dir=args.word_embed_dir,
+        tokenizer=tokenizer,
+        batch_size=args.batch_size,
+        max_text_length=args.max_text_length,
+        max_audio_words=args.max_audio_words,
     )
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=int(args.batch_size),
-        shuffle=True,
-        collate_fn=collate_fn,
-        num_workers=0,
-    )
-    valid_loader = DataLoader(
-        valid_dataset,
-        batch_size=int(args.batch_size),
-        shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=0,
-    )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=int(args.batch_size),
-        shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=0,
-    )
+    train_loader = dataloaders["train"]
+    valid_loader = dataloaders["valid"]
+    test_loader = dataloaders["test"]
 
-    # Create model
-    model = MultimodalFusionClassifier(
-        text_encoder_dim=768, audio_encoder_dim=768, hidden_dim=256, num_heads=4
+    print(f"Train: {dataloaders['train_size']} samples")
+    print(f"Valid: {dataloaders['valid_size']} samples")
+    print(f"Test: {dataloaders['test_size']} samples")
+
+    # Initialize model
+    print("\nInitializing fusion model...")
+    model = FusionClassifier(
+        text_model_name=args.text_model_name,
+        text_dim=768,
+        audio_dim=768,
+        hidden_dim=args.hidden_dim,
+        num_heads=args.num_heads,
+        num_classes=2,
+        dropout=args.dropout,
+        freeze_text_encoder=args.freeze_text_encoder,
     ).to(device)
 
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=float(args.lr))
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    print(f"Frozen parameters: {total_params - trainable_params:,}")
+
+    # Training setup
+    optimizer = optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad], lr=args.lr
+    )
+    loss_fn = nn.CrossEntropyLoss()
 
     # Training loop
-    print("Starting training...")
-    for epoch in range(int(args.epochs)):
-        model.train()
-        train_loss = 0.0
-        for word_audio, text_emb, y in tqdm(
-            train_loader, desc=f"Epoch {epoch+1}/{args.epochs}"
-        ):
-            word_audio = word_audio.to(device)
-            text_emb = text_emb.to(device)
-            y = y.to(device)
+    print(f"\nTraining for {args.epochs} epochs...")
+    best_valid_acc = 0.0
 
-            optimizer.zero_grad()
-            logits = model(word_audio, text_emb)
-            loss = criterion(logits, y)
-            loss.backward()
-            optimizer.step()
+    for epoch in range(args.epochs):
+        print(f"\nEpoch {epoch + 1}/{args.epochs}")
 
-            train_loss += loss.item()
+        train_loss = train_epoch(model, train_loader, optimizer, loss_fn, device)
+        print(f"Train loss: {train_loss:.4f}")
 
-        print(f"Epoch {epoch+1}: train_loss={train_loss/len(train_loader):.4f}")
-
-        # Validate
+        # Evaluate on validation set
         valid_metrics = eval_model(model, valid_loader, device)
         print(
-            f"Valid: acc={valid_metrics['accuracy']:.4f}, "
-            f"f1={valid_metrics['f1']:.4f}, "
-            f"roc_auc={valid_metrics.get('roc_auc', 'N/A')}"
+            f"Valid - Acc: {valid_metrics['accuracy']:.4f}, "
+            f"F1: {valid_metrics['f1']:.4f}, "
+            f"ROC-AUC: {valid_metrics.get('roc_auc', 'N/A')}"
         )
 
-    # Final evaluation
-    print("Evaluating on test set...")
-    test_metrics = eval_model(model, test_loader, device)
-    train_metrics = eval_model(model, train_loader, device)
-    valid_metrics = eval_model(model, valid_loader, device)
+        # Save best model
+        if valid_metrics["accuracy"] > best_valid_acc:
+            best_valid_acc = valid_metrics["accuracy"]
+            print(f"New best validation accuracy: {best_valid_acc:.4f}")
 
-    # Save results
+    # Create output directory
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    metrics = {
-        "train": train_metrics,
-        "valid": valid_metrics,
-        "test": test_metrics,
-        "n": len(test_dataset),
-    }
-    metrics_sanitized = sanitize_for_json(metrics)
-    (args.out_dir / "metrics.json").write_text(json.dumps(metrics_sanitized, indent=2))
 
-    # Save confusion matrix
-    if len(test_metrics["confusion_matrix"]) > 0:
-        cm_test = np.array(test_metrics["confusion_matrix"])
+    # Save model checkpoint
+    print("\nSaving model checkpoint...")
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "text_model_name": args.text_model_name,
+            "hidden_dim": args.hidden_dim,
+            "num_heads": args.num_heads,
+            "freeze_text_encoder": args.freeze_text_encoder,
+        },
+        args.out_dir / "model.pth",
+    )
+
+    # Save config
+    config_dict = {
+        "text_model_name": args.text_model_name,
+        "max_text_length": args.max_text_length,
+        "max_audio_words": args.max_audio_words,
+        "hidden_dim": args.hidden_dim,
+        "num_heads": args.num_heads,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "dropout": args.dropout,
+        "freeze_text_encoder": args.freeze_text_encoder,
+    }
+    (args.out_dir / "config.json").write_text(json.dumps(config_dict, indent=2))
+
+    # Final evaluation on all splits
+    print("\nFinal evaluation...")
+    metrics = {
+        "train": eval_model(model, train_loader, device),
+        "valid": eval_model(model, valid_loader, device),
+        "test": eval_model(model, test_loader, device),
+        "n": len(metadata_df),
+    }
+
+    # Print final metrics
+    for split in ["train", "valid", "test"]:
+        m = metrics[split]
+        print(f"\n{split.upper()}:")
+        print(f"  Accuracy: {m['accuracy']:.4f}")
+        print(f"  F1: {m['f1']:.4f}")
+        print(f"  ROC-AUC: {m.get('roc_auc', 'N/A')}")
+
+    # Save metrics
+    (args.out_dir / "metrics.json").write_text(
+        json.dumps(sanitize_for_json(metrics), indent=2, allow_nan=False)
+    )
+
+    # Save confusion matrices
+    for split in ["train", "valid", "test"]:
+        cm = np.array(metrics[split]["confusion_matrix"], dtype=np.int64)
         save_confusion_matrix_png(
-            cm=cm_test,
-            labels=["No Dementia", "Dementia"],
-            out_path=args.out_dir / "confusion_matrix_test.png",
-            title="Fusion Model (Test Set)",
+            cm=cm,
+            labels=["no_dementia", "dementia"],
+            out_path=args.out_dir / f"confusion_matrix_{split}.png",
+            title=f"Fusion Model ({split})",
         )
 
-    print(f"Wrote metrics to: {args.out_dir / 'metrics.json'}")
-    print(f"Test accuracy: {test_metrics['accuracy']:.4f}")
-    print(f"Test F1: {test_metrics['f1']:.4f}")
-    print(f"Test ROC-AUC: {test_metrics.get('roc_auc', 'N/A')}")
+    print(f"\n✓ Training complete!")
+    print(f"  Output directory: {args.out_dir}")
+    print(f"  Test accuracy: {metrics['test']['accuracy']:.4f}")
+    print(f"  Test F1: {metrics['test']['f1']:.4f}")
 
 
 if __name__ == "__main__":
