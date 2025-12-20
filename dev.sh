@@ -22,6 +22,7 @@ poetry run python -m dementia_project.train.train_densenet_spec --metadata_csv "
 
 # Train Text Only Baseline
 poetry run python -m dementia_project.train.train_text_baseline --metadata_csv "data/processed/metadata.csv" --splits_csv "data/processed/splits.csv" --asr_manifest_csv "data/processed/asr_whisper/asr_manifest.csv" --out_dir "runs/text_baseline_roberta"
+poetry run python -m dementia_project.train.train_text_baseline --metadata_csv data/processed/metadata.csv --splits_csv data/processed/splits.csv --asr_manifest_csv data/processed/asr_whisper/asr_manifest.csv --out_dir runs/text_baseline --epochs 3 --batch_size 16
 
 # Export Models with ONNX
 poetry run python -m dementia_project.export.run_onnx_export --model_type densenet --out_dir artifacts --test
