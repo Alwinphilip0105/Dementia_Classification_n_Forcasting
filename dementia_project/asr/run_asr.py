@@ -53,9 +53,9 @@ def main() -> None:
                     "audio_path": str(audio_path.as_posix()),
                     "asr_dir": str(out.as_posix()),
                     "transcript_json": str(transcript_path.as_posix()),
-                    "words_json": str(words_path.as_posix())
-                    if words_path.exists()
-                    else "",
+                    "words_json": (
+                        str(words_path.as_posix()) if words_path.exists() else ""
+                    ),
                 }
             )
             continue

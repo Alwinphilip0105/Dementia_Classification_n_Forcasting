@@ -1,7 +1,9 @@
-Dementia_Classification_n_Forcasting/│
+Dementia_Classification_n_Forcasting/
+│
 ├── .gitignore
 ├── configs/
 │   └── default.yaml
+│
 ├── data/
 │   └── processed/
 │       ├── asr/                          # Legacy ASR outputs (partial)
@@ -26,15 +28,12 @@ Dementia_Classification_n_Forcasting/│
 │   └── dementia/
 │       └── [person_name]/
 │           └── *.wav
-├── nodementia-20251217T041331Z-1-001/     # Extracted non-dementia audio (raw)
-│   └── nodementia/
-│       └── [person_name]/
-│           └── *.wav
 │
 ├── DementiaNet - dementia.csv             # Source metadata CSV
 │
 ├── dementia_project/                      # Main Python package
 │   ├── __init__.py
+│   │
 │   ├── asr/                               # Automatic Speech Recognition
 │   │   ├── __init__.py
 │   │   ├── README.md
@@ -79,9 +78,14 @@ Dementia_Classification_n_Forcasting/│
 │       ├── __init__.py
 │       └── metrics.py                     # Confusion matrix plotting
 │
+├── nodementia-20251217T041331Z-1-001/     # Extracted non-dementia audio (raw)
+│   └── nodementia/
+│       └── [person_name]/
+│           └── *.wav
 │
 ├── notebooks/
 │   └── final_report.ipynb                 # Final report notebook
+│   └── BERT_CARD.md                 # Model Card for BERT
 │
 ├── runs/                                  # Training outputs
 │   ├── densenet_spec_full_cuda/

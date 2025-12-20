@@ -15,20 +15,28 @@ Binary classification: **dementia vs no dementia** from speech audio (and ASR-de
 - Dataset licensing may differ; document the dataset’s original license here once confirmed.
 
 ### Contents
-- Audio files: WAV format (counts will be re-computed by the pipeline).
-- Metadata fields (from CSV): name, dementia type, birth/death, first symptoms year, URLs, gender, ethnicity, datasplit, language.
+- **Audio files**: 355 WAV files total
+  - 224 control (no-dementia) samples
+  - 131 dementia samples
+- **Metadata fields** (from CSV): name, dementia type, birth/death, first symptoms year, URLs, gender, ethnicity, datasplit, language
+- **Audio characteristics**: Variable duration, sample rates; processed to 16kHz mono for consistency
 
 ### Labeling
 - Primary label: folder-based (`dementia-*` vs `nodementia-*`) mapped to {1, 0}.
 - Additional metadata label (optional): `dementia type` (for subgroup analysis).
 
-### Preprocessing (planned)
-- Validate readable audio, compute duration + sample rate.
-- Remove/flag low-quality samples (too short, near-silence, corrupt headers).
-- Generate ASR transcripts and word-level timestamps for multimodal modeling.
+### Preprocessing (completed)
+- ✅ Validated all 355 audio files; computed duration and sample rate
+- ✅ Joined audio filenames to metadata CSV using name normalization
+- ✅ Generated ASR transcripts using Whisper (openai/whisper-tiny)
+- ✅ Extracted word-level timestamps for 51,144 word segments
+- ✅ Created subject-level train/valid/test splits (256/48/51 samples)
+- ✅ No files dropped (all 355 passed validation)
 
-### Known limitations (initial)
-- Metadata CSV appears to cover dementia subjects; controls may have limited metadata.
-- Audio may include variability in recording conditions (noise, channel, microphone).
+### Known limitations
+- **Class imbalance**: Test set has 48 controls vs 3 dementia cases, affecting evaluation metrics
+- **Metadata coverage**: CSV metadata primarily covers dementia subjects; controls have limited metadata
+- **Recording variability**: Audio includes variability in recording conditions (noise, channel, microphone)
+- **Dataset size**: 355 samples is relatively small for deep learning; may limit generalization
 
 

@@ -1,4 +1,4 @@
-"""Text-only baseline: DistilBERT classifier on ASR transcripts."""
+"""Text-only baseline: This is a distilled Bert Model"""
 
 from __future__ import annotations
 

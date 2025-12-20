@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "dementia_project" }]
 
 [tool.poetry.dependencies]
-python = ">=3.12,<3.13"
+python = ">=3.10,<3.13"
 numpy = "^2.2.0"
 pandas = "^2.2.3"
 scikit-learn = "^1.6.0"
