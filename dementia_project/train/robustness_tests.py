@@ -7,10 +7,8 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
-import torchaudio
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from torch.utils.data import DataLoader
 from torchvision.models import densenet121
@@ -19,8 +17,6 @@ from tqdm import tqdm
 from dementia_project.data.io import load_metadata, load_splits
 from dementia_project.features.spectrograms import (
     MelSpecConfig,
-    load_mono_resampled,
-    log_mel_spectrogram,
 )
 from dementia_project.train.train_densenet_spec import SpecDataset
 

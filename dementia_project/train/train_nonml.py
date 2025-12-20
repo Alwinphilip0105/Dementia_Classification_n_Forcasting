@@ -47,7 +47,11 @@ def _build_feature_table(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, list
         labels.append(int(row["label"]))
         splits.append(str(row["split"]))
 
-    X_df = pd.DataFrame(feature_rows).fillna(0.0)
+    X_df = pd.DataFrame(feature_rows).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    # Remove features with zero variance to avoid StandardScaler issues
+    variances = X_df.var()
+    non_zero_var_cols = variances[variances > 1e-10].index  # small epsilon for numerical stability
+    X_df = X_df[non_zero_var_cols]
     X = X_df.to_numpy(dtype=np.float32)
     y = np.array(labels, dtype=np.int64)
     return X, y, splits

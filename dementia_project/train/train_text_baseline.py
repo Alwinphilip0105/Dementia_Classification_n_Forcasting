@@ -249,6 +249,9 @@ def main():
             f"Valid - Acc: {valid_metrics['accuracy']:.4f}, F1: {valid_metrics['f1']:.4f}"
         )
 
+    # Create output directory
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
     # Save model checkpoint
     torch.save(
         {
@@ -278,7 +281,6 @@ def main():
     }
 
     # Save results
-    args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "metrics.json").write_text(
         json.dumps(sanitize_for_json(metrics), indent=2, allow_nan=False)
     )

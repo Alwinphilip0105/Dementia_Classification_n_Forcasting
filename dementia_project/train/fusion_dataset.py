@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pandas as pd
@@ -13,13 +12,11 @@ from torch.utils.data import Dataset
 from dementia_project.features.text_features import (
     TextEmbedConfig,
     embed_text_mean_pool,
-    load_text_model,
     load_transcript,
 )
 from dementia_project.features.wav2vec2_embed import (
     Wav2Vec2EmbedConfig,
     embed_file_mean_pool,
-    load_wav2vec2,
 )
 
 

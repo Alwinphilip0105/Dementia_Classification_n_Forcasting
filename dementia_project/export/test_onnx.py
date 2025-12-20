@@ -81,7 +81,7 @@ def test_densenet_onnx_conformance(
         "num_test_samples": num_test_samples,
     }
 
-    print(f"ONNX Conformance Test Results:")
+    print("ONNX Conformance Test Results:")
     print(f"  Max absolute difference: {max_diff:.6f}")
     print(f"  Mean absolute difference: {np.mean(all_diffs):.6f}")
     print(f"  Tolerance: {tolerance}")
@@ -167,7 +167,7 @@ def test_fusion_onnx_conformance(
         "num_test_samples": num_test_samples,
     }
 
-    print(f"ONNX Conformance Test Results:")
+    print("ONNX Conformance Test Results:")
     print(f"  Max absolute difference: {max_diff:.6f}")
     print(f"  Mean absolute difference: {np.mean(all_diffs):.6f}")
     print(f"  Tolerance: {tolerance}")

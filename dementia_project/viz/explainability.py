@@ -8,8 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-from captum.attr import IntegratedGradients, Saliency
-from captum.attr import visualization as viz
+from captum.attr import IntegratedGradients
 
 
 def explain_densenet_with_integrated_gradients(

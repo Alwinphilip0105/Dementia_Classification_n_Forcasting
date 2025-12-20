@@ -55,7 +55,7 @@ def main() -> None:
 
     # Print summary
     dementia_count = sum(1 for p in predictions if p["predicted_class"] == 1)
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Total files: {len(predictions)}")
     print(f"  Predicted dementia: {dementia_count}")
     print(f"  Predicted control: {len(predictions) - dementia_count}")
